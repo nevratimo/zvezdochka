@@ -43,7 +43,8 @@
   .orb.c{width:40vmax;height:40vmax;left:30%;top:35%;background:radial-gradient(circle,rgba(190,140,255,.08),transparent 65%);animation:drift1 30s ease-in-out infinite alternate-reverse}
   @keyframes drift1{to{transform:translate(8vmax,6vmax) scale(1.12)}}
   @keyframes drift2{to{transform:translate(-7vmax,-5vmax) scale(1.08)}}
-  #bg,#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  /* высота по «большому» вьюпорту: на iPhone/Android при скрытии адресной строки слои не пересоздаются */
+  #bg,#fx{position:fixed;left:0;top:0;width:100%;height:100vh;height:100lvh;pointer-events:none}
   #bg{z-index:1}
   #fx{z-index:50}
 
@@ -413,9 +414,12 @@ const meteors = [];
 let nextMeteor = 2.5, parX = 0, parY = 0, tParX = 0, tParY = 0;
 
 function resizeViews() {
-  VW = innerWidth; VH = innerHeight;
+  const w = fx.clientWidth || innerWidth, h = fx.clientHeight || innerHeight;
+  if (w === VW && h === VH && fx.width) return;   // размер не изменился — буферы не трогаем
+  VW = w; VH = h;
   for (const c of [bg, fx]) { c.width = Math.round(VW * DPR); c.height = Math.round(VH * DPR); }
 }
+VW = 0; VH = 0;
 addEventListener('pointermove', e => { tParX = e.clientX / VW - .5; tParY = e.clientY / VH - .5; }, { passive: true });
 
 function drawBg(t, dt) {
@@ -1058,8 +1062,28 @@ wrap.addEventListener('pointermove', e => {
 });
 wrap.addEventListener('pointerleave', () => { card.style.setProperty('--rx', '0deg'); card.style.setProperty('--ry', '0deg'); });
 
-card.addEventListener('pointerdown', openCard);
-card.addEventListener('touchstart', openCard, { passive: true });
+/* Настоящий тап: палец опустили и подняли почти на том же месте.
+   Прокрутка страницы (палец поехал / браузер отменил касание) нажатием не считается. */
+function onTap(el, fn) {
+  let id = null, sx = 0, sy = 0, t0 = 0;
+  el.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    id = e.pointerId; sx = e.clientX; sy = e.clientY; t0 = performance.now();
+  }, { passive: true });
+  el.addEventListener('pointermove', e => {
+    if (e.pointerId === id && Math.hypot(e.clientX - sx, e.clientY - sy) > 12) id = null;
+  }, { passive: true });
+  el.addEventListener('pointercancel', () => { id = null; });
+  el.addEventListener('pointerup', e => {
+    if (e.pointerId !== id) return;
+    id = null;
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) <= 12 && performance.now() - t0 < 900) fn(e);
+  });
+  // нажатие с клавиатуры (Enter/пробел на кнопке) приходит как click без координат
+  el.addEventListener('click', e => { if (e.detail === 0) fn(e); });
+}
+
+onTap(card, openCard);
 card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCard(); } });
 
 function openCard() {
@@ -1106,17 +1130,33 @@ function layoutOpen() {
   }, 350);
 }
 
-function startReading() {
-  if (drawingStarted) return;
-  document.body.classList.add('reading');
+/* Пауза на чтение: кнопка и полоска появляются, когда текст проявился,
+   а отсчёт READING_DELAY_SECONDS начинается, только когда они реально видны на экране
+   (на телефоне текст может не помещаться — пусть Алла спокойно дочитает и долистает) */
+let countdownStarted = false;
+function startCountdown() {
+  if (countdownStarted || drawingStarted) return;
+  countdownStarted = true;
   readFill.style.transitionDuration = READING_DELAY_SECONDS + 's';
   requestAnimationFrame(() => requestAnimationFrame(() => readFill.classList.add('fill')));
   readTimer = setTimeout(startDrawing, READING_DELAY_SECONDS * 1000);
 }
+function startReading() {
+  if (drawingStarted) return;
+  document.body.classList.add('reading');
+  const ui = $('.read-ui');
+  const check = () => {
+    if (countdownStarted || drawingStarted) { clearInterval(poll); removeEventListener('scroll', check); return; }
+    const r = ui.getBoundingClientRect();
+    if (r.height > 0 && r.top >= 0 && r.bottom <= (window.visualViewport ? visualViewport.height : innerHeight) + 2) startCountdown();
+  };
+  const poll = setInterval(check, 400);
+  addEventListener('scroll', check, { passive: true });
+  check();
+  setTimeout(startCountdown, 60000);   // подстраховка, если страницу так и не долистали
+}
 
-function onGift(e) { e.stopPropagation(); if (e.cancelable && e.type === 'pointerdown') e.preventDefault(); startDrawing(); }
-giftBtn.addEventListener('pointerdown', onGift);
-giftBtn.addEventListener('click', onGift);
+onTap(giftBtn, e => { e.stopPropagation(); startDrawing(); });
 
 async function startDrawing() {
   if (drawingStarted) return;
