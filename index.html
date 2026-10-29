@@ -132,6 +132,8 @@
   .message p{font-size:clamp(18px,4.6vw,20px);line-height:1.55;font-weight:500;color:#3a2430;margin:0 0 .85em;text-wrap:pretty}
   .message p.lead{font-style:italic;font-size:clamp(19.5px,5vw,22px);color:var(--wine);font-weight:500}
   .message p.last{font-style:italic;color:#5a1a33;margin-bottom:0}
+  .message p.sign{font-family:var(--script);font-weight:400;font-size:clamp(30px,8.4vw,38px);line-height:1.2;
+    color:var(--wine);text-align:right;margin:.45em .2em 0 0;text-shadow:0 1px 0 rgba(255,255,255,.55)}
   .message .w{display:inline-block;opacity:0}
   .revealed .message .w{animation:wordIn 1s cubic-bezier(.2,.7,.2,1) forwards;animation-delay:calc(var(--i)*58ms + .55s)}
   @keyframes wordIn{from{opacity:0}to{opacity:1}}
@@ -247,6 +249,13 @@
     text-shadow:0 0 16px rgba(255,200,140,.55);opacity:0;transform:translateY(10px);transition:opacity 1.6s ease .6s,transform 1.6s ease .6s}
   .finale .art-caption{opacity:1;transform:none}
 
+  /* созвездие: прозрачный участок неба, звёзды рисуются на верхнем холсте #fx */
+  .sky{display:none;position:relative;width:min(92vw,520px);aspect-ratio:1.8/1;margin-top:clamp(4px,2vh,20px)}
+  .sky.show{display:block}
+  .sky-label{position:absolute;left:0;right:0;bottom:4px;text-align:center;font-style:italic;font-size:18px;
+    letter-spacing:.1em;color:#fbe8c4;opacity:0;transition:opacity 2.2s ease;text-shadow:0 0 12px rgba(255,200,140,.5)}
+  .sky.lit .sky-label{opacity:.85}
+
   /* смена фокуса: текст отходит на второй план */
   .painting .card{opacity:.62}
   .finale .card{opacity:1}
@@ -290,6 +299,7 @@
                     <p class="lead">Девушке, которая поразила мое сердце одним своим взглядом.</p>
                     <p>Ты сама, наверное, даже не представляешь, какую силу прячет твой взгляд. Хватило лишь одной встречи с тобой, чтобы в одно мгновение вокруг выключился весь лишний шум, оставив только тебя в поле моего зрения.</p>
                     <p class="last">Ты невероятно красива. Ты настоящая. Та, о которой я думаю постоянно..</p>
+                    <p class="sign">моя звездочка ❤️</p>
                   </div>
                   <!-- ========================================= -->
 
@@ -335,6 +345,11 @@
         <div class="art-caption">Аллочка</div>
       </section>
     </div>
+
+    <!-- ===== Созвездие «Алла» (появляется после картины) ===== -->
+    <section class="sky" id="sky" aria-label="Созвездие Аллы">
+      <div class="sky-label">✦ созвездие Аллы ✦</div>
+    </section>
   </main>
 
   <canvas id="fx"></canvas>
@@ -434,6 +449,7 @@ function drawBg(t, dt) {
   parX += (tParX - parX) * .04; parY += (tParY - parY) * .04;
   bctx.fillStyle = '#fff3dc';
   for (const s of stars) {
+    if (s.taken) continue;   // эта звезда улетела в созвездие
     const a = s.a * (.55 + .45 * Math.sin(t * s.s + s.p));
     const x = s.x * VW - parX * 22 * s.d, y = s.y * VH - parY * 22 * s.d;
     if (s.r > 1.25) { const z = s.r * 9; bctx.globalAlpha = a; bctx.drawImage(glowSprite, x - z / 2, y - z / 2, z, z); }
@@ -766,6 +782,7 @@ function startFinale(now) {
   P.state = 'sheen'; P.f0 = now; P.brushA = 0;
   document.body.classList.add('finale');
   buzz([22, 90, 22]);
+  setTimeout(startConstellation, 3200);
   const r = frameEl.getBoundingClientRect();
   // на маленьком экране докручиваем так, чтобы были видны и картина, и подпись
   setTimeout(() => {
@@ -926,6 +943,112 @@ function drawBrush(ctx, L, wb, col) {
   ctx.beginPath(); ctx.moveTo(-wb * .45, yB * 1.35); ctx.quadraticCurveTo(-wb * .55, yB * .6, -wb * .15, -L * .015); ctx.stroke();
 }
 
+/* =====================================================================
+   Созвездие «Алла»: звёзды с фона слетаются и соединяются в имя
+   ===================================================================== */
+const CONST_RAW = [
+  [0, .40], [.10, .02], [.20, .40], [.048, .25], [.152, .25],                                   // А
+  [.26, .40], [.30, .16], [.40, .16], [.40, .40],                                               // л
+  [.47, .40], [.51, .16], [.61, .16], [.61, .40],                                               // л
+  [.70, .20], [.76, .15], [.82, .20], [.82, .40], [.75, .40], [.69, .34], [.75, .28], [.82, .28] // а
+];
+const CONST_EDGES = [[0, 1], [1, 2], [3, 4], [5, 6], [6, 7], [7, 8], [9, 10], [10, 11], [11, 12],
+  [13, 14], [14, 15], [15, 20], [20, 16], [16, 17], [17, 18], [18, 19], [19, 20]];
+const C = { phase: 'off', t0: 0, from: [], delay: [] };
+const skyEl = $('#sky');
+const CONST_FLY = 2.6, CONST_LINES_AT = 4.2, CONST_LINE = .22;
+
+function startConstellation() {
+  if (C.phase !== 'off') return;
+  skyEl.classList.add('show');
+  requestAnimationFrame(() => {
+    const r = skyEl.getBoundingClientRect();
+    const needScroll = r.bottom > innerHeight - 10;
+    if (needScroll) skyEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setTimeout(() => {
+      // берём звёзды, которые сейчас светят на фоне, — они и полетят в созвездие
+      const pool = stars.filter(s => !s.taken);
+      C.from = CONST_RAW.map(() => {
+        const s = pool.splice((Math.random() * pool.length) | 0, 1)[0];
+        if (!s) return { x: Math.random() * VW, y: Math.random() * VH * .5 };
+        s.taken = true;
+        return { x: s.x * VW - parX * 22 * s.d, y: s.y * VH - parY * 22 * s.d };
+      });
+      C.delay = CONST_RAW.map((_, i) => i * .06 + Math.random() * .25);
+      C.phase = 'fly'; C.t0 = performance.now();
+    }, needScroll ? 900 : 200);
+  });
+}
+
+function constPoint(i, r) {
+  const inner = r.width * .84, sc = inner / .82;
+  const ox = r.left + (r.width - inner) / 2, oy = r.top + (r.height - .38 * sc) / 2 - 20;
+  return [ox + CONST_RAW[i][0] * sc, oy + (CONST_RAW[i][1] - .02) * sc];
+}
+
+function starAt(i, e, r) {
+  const [tx, ty] = constPoint(i, r), f = C.from[i];
+  const k = clamp((e - C.delay[i]) / CONST_FLY, 0, 1), q = easeInOut(k), u = 1 - q;
+  const mx = (f.x + tx) / 2 + (ty - f.y) * .2, my = (f.y + ty) / 2 - (tx - f.x) * .2;   // плавная дуга
+  return [u * u * f.x + 2 * u * q * mx + q * q * tx, u * u * f.y + 2 * u * q * my + q * q * ty, k];
+}
+
+function drawConstellation(now) {
+  if (C.phase === 'off') return;
+  const r = skyEl.getBoundingClientRect();
+  if (r.bottom < -40 || r.top > VH + 40) return;
+  const e = (now - C.t0) / 1000, ctx = fctx;
+
+  // линии: проводятся по очереди, как будто созвездие рисуют
+  const lt = e - CONST_LINES_AT;
+  if (lt > 0) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    CONST_EDGES.forEach(([a, b], k) => {
+      const p = easeInOut(clamp((lt - k * CONST_LINE) / CONST_LINE, 0, 1));
+      if (p <= 0) return;
+      const [x1, y1] = constPoint(a, r), [x2, y2] = constPoint(b, r);
+      const x = lerp(x1, x2, p), y = lerp(y1, y2, p);
+      ctx.strokeStyle = 'rgba(255,210,140,.16)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x, y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,238,205,.7)'; ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x, y); ctx.stroke();
+    });
+    ctx.restore();
+    if (C.phase !== 'done' && lt > CONST_EDGES.length * CONST_LINE) {
+      C.phase = 'done';
+      skyEl.classList.add('lit');
+      buzz(14);
+      CONST_RAW.forEach((_, i) => {
+        const [x, y] = constPoint(i, r);
+        for (let j = 0; j < 3; j++) spark(x, y, { vx: rand(-40, 40), vy: rand(-50, 20), drag: 2, max: rand(.6, 1.2), size: rand(1.5, 3.5) });
+      });
+    }
+  }
+
+  // звёзды: летят по дуге со следом, потом мерцают на своих местах
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < CONST_RAW.length; i++) {
+    const [x, y, k] = starAt(i, e, r);
+    if (k > 0 && k < 1) {
+      const [px, py] = starAt(i, e - .09, r);
+      const gr = ctx.createLinearGradient(px, py, x, y);
+      gr.addColorStop(0, 'rgba(255,230,190,0)'); gr.addColorStop(1, 'rgba(255,230,190,.55)');
+      ctx.strokeStyle = gr; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+    }
+    const tw = .72 + .28 * Math.sin(now / 1000 * (1.2 + (i % 5) * .35) + i * 1.7);
+    const z = (k < 1 ? 16 + 10 * Math.sin(k * Math.PI) : 18 * tw) * (i === 1 ? 1.5 : 1);   // вершина «А» — самая яркая
+    ctx.globalAlpha = .95;
+    ctx.drawImage(glowSprite, x - z / 2, y - z / 2, z, z);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff7e6';
+    ctx.beginPath(); ctx.arc(x, y, i === 1 ? 2.2 : 1.5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawFx(dt) {
   fctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   fctx.clearRect(0, 0, VW, VH);
@@ -991,6 +1114,8 @@ function drawFx(dt) {
     drawBrush(fctx, L, wb, P.bcol.map(v => v | 0));
     fctx.restore();
   }
+
+  drawConstellation(performance.now());
 
   // искры (аддитивное свечение)
   fctx.globalCompositeOperation = 'lighter';
@@ -1189,6 +1314,7 @@ document.addEventListener('visibilitychange', () => {
   const gap = now - hiddenAt; hiddenAt = 0;
   if (P.state === 'drawing') P.t0 += gap;
   if (P.state === 'sheen') P.f0 += gap;
+  if (C.phase !== 'off') C.t0 += gap;
   lastT = now;
 });
 
